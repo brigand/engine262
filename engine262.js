@@ -42933,7 +42933,8 @@
   const {
     ObjectCreate: ObjectCreate$1,
     CreateBuiltinFunction: CreateBuiltinFunction$1,
-    GetModuleNamespace: GetModuleNamespace$1
+    GetModuleNamespace: GetModuleNamespace$1,
+    ToPrimitive: ToPrimitive$1
   } = Abstract;
   function initializeAgent(options = {}) {
     if (surroundingAgent) {
@@ -43103,7 +43104,6 @@
     }
 
   }
-
   function Throw(realm, V, ...args) {
     return realm.scope(() => {
       if (typeof V === 'string') {
@@ -43111,6 +43111,46 @@
       }
 
       return new ThrowCompletion(V);
+    });
+  }
+  function ToString$1(realm, value) {
+    return realm.scope(() => {
+      while (true) {
+        const type = Type(value);
+
+        switch (type) {
+          case 'String':
+            return value.stringValue();
+
+          case 'Number':
+            return value.numberValue().toString();
+
+          case 'Boolean':
+            return value.booleanValue().toString();
+
+          case 'Undefined':
+            return 'undefined';
+
+          case 'Null':
+            return 'null';
+
+          case 'Symbol':
+            return surroundingAgent.Throw('TypeError', msg('CannotConvertSymbol', 'string'));
+
+          default:
+            value = ToPrimitive$1(value, 'String');
+
+            if (value instanceof AbruptCompletion) {
+              return value;
+            }
+
+            if (value instanceof Completion) {
+              value = value.Value;
+            }
+
+            break;
+        }
+      }
     });
   }
 
@@ -43363,6 +43403,7 @@
   exports.Object = APIObject;
   exports.Realm = APIRealm;
   exports.Throw = Throw;
+  exports.ToString = ToString$1;
   exports.Value = APIValue;
   exports.initializeAgent = initializeAgent;
   exports.inspect = inspect;
