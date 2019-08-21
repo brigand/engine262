@@ -38,201 +38,6 @@
     }
 
   }
-  class CallSite {
-    constructor(context) {
-      this.context = context;
-      this.isToplevel = false;
-      this.isConstructor = false;
-      this.lineNumber = null;
-      this.columnNumber = null;
-      this.methodName = null;
-      this.evalOrigin = null;
-    }
-
-    isEval() {
-      return !!this.evalOrigin;
-    }
-
-    isNative() {
-      return this.context.Function instanceof BuiltinFunctionValue;
-    }
-
-    isAsync() {
-      if (this.context.Function !== Value.null) {
-        return this.context.Function.ECMAScriptCode && this.context.Function.ECMAScriptCode.async;
-      }
-
-      return false;
-    }
-
-    getThisValue() {
-      if (this.context.LexicalEnvironment.HasThisBinding() === Value.true) {
-        return this.context.LexicalEnvironment.GetThisBinding();
-      }
-
-      return null;
-    }
-
-    getFunctionName() {
-      if (this.context.Function !== Value.null) {
-        const name = this.context.Function.properties.get(new Value('name'));
-
-        if (name) {
-          let _val = ToString(name.Value);
-
-          Assert(!(_val instanceof AbruptCompletion), "");
-
-          if (_val instanceof Completion) {
-            _val = _val.Value;
-          }
-
-          return _val.stringValue();
-        }
-      }
-
-      return null;
-    }
-
-    getSpecifier() {
-      if (this.context.ScriptOrModule instanceof AbstractModuleRecord) {
-        return this.context.ScriptOrModule.HostDefined.specifier;
-      }
-
-      return null;
-    }
-
-    getMethodName() {
-      const idx = surroundingAgent.executionContextStack.indexOf(this.context);
-      const parent = surroundingAgent.executionContextStack[idx - 1];
-
-      if (parent) {
-        return parent.callSite.methodName;
-      }
-
-      return null;
-    }
-
-    setLocation(node) {
-      const {
-        line,
-        column
-      } = node.loc.start;
-      this.lineNumber = line;
-      this.columnNumber = column;
-
-      if (node.type === 'CallExpression' || node.type === 'NewExpression') {
-        if (node.callee.type === 'MemberExpression' || node.callee.type === 'Identifier') {
-          this.methodName = node.callee.sourceText();
-        }
-      }
-    }
-
-    copy(context = this.context) {
-      const c = new CallSite(context);
-      c.isToplevel = this.isToplevel;
-      c.isConstructor = this.isConstructor;
-      c.lineNumber = this.lineNumber;
-      c.columnNumber = this.columnNumber;
-      c.methodName = this.methodName;
-      c.evalOrigin = this.evalOrigin;
-      return c;
-    }
-
-    static loc(site) {
-      if (site.isNative()) {
-        return 'native';
-      }
-
-      let out = '';
-      const specifier = site.getSpecifier();
-
-      if (!specifier && site.isEval()) {
-        out += this.formatEvalOrigin(site, site.evalOrigin);
-      }
-
-      if (specifier) {
-        out += specifier;
-      } else {
-        out += '<anonymous>';
-      }
-
-      if (site.lineNumber !== null) {
-        out += `:${site.lineNumber}`;
-
-        if (site.columnNumber !== null) {
-          out += `:${site.columnNumber}`;
-        }
-      }
-
-      return out.trim();
-    }
-
-    static formatEvalOrigin(site, origin) {
-      const specifier = origin.getSpecifier();
-
-      if (specifier) {
-        return specifier;
-      }
-
-      let out = 'eval at ';
-      const name = site.getFunctionName();
-
-      if (name) {
-        out += name;
-      } else {
-        out += '<anonymous>';
-      }
-
-      if (origin.lineNumber !== null) {
-        out += `:${origin.lineNumber}`;
-
-        if (origin.columnNumber !== null) {
-          out += `:${origin.columnNumber}`;
-        }
-      }
-
-      out += ', ';
-      return out;
-    }
-
-    toString() {
-      const isAsync = this.isAsync();
-      const functionName = this.getFunctionName();
-      const isMethodCall = !(this.isToplevel || this.isConstructor);
-      let string = isAsync ? 'async ' : '';
-
-      if (isMethodCall) {
-        const methodName = this.getMethodName();
-
-        if (functionName) {
-          string += functionName;
-
-          if (methodName && functionName !== methodName && !methodName.endsWith(functionName)) {
-            string += ` [as ${methodName}]`;
-          }
-        } else if (methodName) {
-          string += methodName;
-        } else {
-          string += '<anonymous>';
-        }
-      } else if (this.isConstructor) {
-        string += 'new ';
-
-        if (functionName) {
-          string += functionName;
-        } else {
-          string += '<anonymous>';
-        }
-      } else if (functionName) {
-        string += functionName;
-      } else {
-        return `${string}${CallSite.loc(this)}`;
-      }
-
-      return `${string} (${CallSite.loc(this)})`;
-    }
-
-  }
   function unwind(iterator, maxSteps = 1) {
     let steps = 0;
 
@@ -266,83 +71,188 @@
     } = context.codeEvaluationState.next(completion);
 
     if (typeof value === 'function' && value[kSafeToResume] === true) {
-      let _val2 = value();
+      let _val = value();
 
-      Assert(!(_val2 instanceof AbruptCompletion), "");
+      Assert(!(_val instanceof AbruptCompletion), "");
 
-      if (_val2 instanceof Completion) {
-        _val2 = _val2.Value;
+      if (_val instanceof Completion) {
+        _val = _val.Value;
       }
 
-      return _val2;
+      return _val;
     }
 
     return value;
   }
-  const kMaxAsyncFrames = 8;
-
-  function captureAsyncStackTrace(stack, promise) {
-    let added = 0;
-
-    while (added < kMaxAsyncFrames) {
-      if (promise.PromiseFulfillReactions.length !== 1) {
-        return;
-      }
-
-      const [reaction] = promise.PromiseFulfillReactions;
-
-      if (reaction.Handler.nativeFunction === AwaitFulfilledFunctions) {
-        const asyncContext = reaction.Handler.AsyncContext;
-        stack.push(asyncContext.callSite);
-        added += 1;
-
-        if ('PromiseState' in asyncContext.promiseCapability.Promise) {
-          promise = asyncContext.promiseCapability.Promise;
-        } else {
-          return;
-        }
-      } else {
-        if ('PromiseState' in reaction.Capability.Promise) {
-          promise = reaction.Capability.Promise;
-        } else {
-          return;
-        }
-      }
+  class CallSite {
+    constructor(context) {
+      this.context = context;
+      this.lineNumber = null;
+      this.columnNumber = null;
+      this.constructCall = false;
     }
-  }
 
+    clone() {
+      const c = new CallSite(this.context);
+      c.lineNumber = this.lineNumber;
+      c.columnNumber = this.columnNumber;
+      c.constructCall = this.constructCall;
+      return c;
+    }
+
+    isTopLevel() {
+      return this.context.Function === Value.null;
+    }
+
+    isConstructCall() {
+      return this.constructCall;
+    }
+
+    isAsync() {
+      if (this.context.Function !== Value.null) {
+        return this.context.Function.ECMAScriptCode && this.context.Function.ECMAScriptCode.async;
+      }
+
+      return false;
+    }
+
+    isNative() {
+      return !!this.context.Function.nativeFunction;
+    }
+
+    getFunctionName() {
+      if (this.context.Function !== Value.null) {
+        const name = this.context.Function.properties.get(new Value('name'));
+
+        if (name) {
+          let _val2 = ToString(name.Value);
+
+          Assert(!(_val2 instanceof AbruptCompletion), "");
+
+          if (_val2 instanceof Completion) {
+            _val2 = _val2.Value;
+          }
+
+          return _val2.stringValue();
+        }
+      }
+
+      return null;
+    }
+
+    getSpecifier() {
+      if (this.context.ScriptOrModule !== Value.null) {
+        return this.context.ScriptOrModule.HostDefined.specifier;
+      }
+
+      return null;
+    }
+
+    setLocation(node) {
+      const {
+        line,
+        column
+      } = node.loc.start;
+      this.lineNumber = line;
+      this.columnNumber = column;
+    }
+
+    loc() {
+      if (this.isNative()) {
+        return 'native';
+      }
+
+      let out = '';
+      const specifier = this.getSpecifier();
+
+      if (specifier) {
+        out += specifier;
+      } else {
+        out += '<anonymous>';
+      }
+
+      if (this.lineNumber !== null) {
+        out += `:${this.lineNumber}`;
+
+        if (this.columnNumber !== null) {
+          out += `:${this.columnNumber}`;
+        }
+      }
+
+      return out.trim();
+    }
+
+    toString() {
+      const isAsync = this.isAsync();
+      const functionName = this.getFunctionName();
+      const isMethodCall = !(this.isTopLevel() || this.isConstructCall());
+      let string = isAsync ? 'async ' : '';
+
+      if (isMethodCall) {
+        if (functionName) {
+          string += functionName;
+        } else {
+          string += '<anonymous>';
+        }
+      } else if (this.isConstructCall()) {
+        string += 'new ';
+
+        if (functionName) {
+          string += functionName;
+        } else {
+          string += '<anonymous>';
+        }
+      } else if (functionName) {
+        string += functionName;
+      } else {
+        return `${string}${this.loc()}`;
+      }
+
+      return `${string} (${this.loc()})`;
+    }
+
+  }
   function captureStack(O) {
     const stack = [];
 
-    for (const e of surroundingAgent.executionContextStack.slice(0, -1).reverse()) {
-      stack.push(e.callSite);
+    for (let i = surroundingAgent.executionContextStack.length - 2; i >= 0; i -= 1) {
+      const e = surroundingAgent.executionContextStack[i];
 
-      if (e.callSite.isToplevel) {
+      if (e.VariableEnvironment === undefined) {
         break;
       }
+
+      stack.push(e.callSite.clone());
     }
 
-    if (stack[0].context.promiseCapability) {
-      stack.pop();
-      captureAsyncStackTrace(stack, stack[0].context.promiseCapability.Promise);
-    }
-
-    let _val3 = ToString(O);
-
-    Assert(!(_val3 instanceof AbruptCompletion), "");
-
-    if (_val3 instanceof Completion) {
-      _val3 = _val3.Value;
-    }
-
-    const errorString = _val3.stringValue();
-
-    const trace = `${errorString}${stack.map(s => `\n  at ${s}`).join('')}`;
+    let cache = null;
     Assert(!(DefinePropertyOrThrow(O, new Value('stack'), Descriptor({
-      Value: new Value(trace),
-      Writable: Value.true,
+      Get: CreateBuiltinFunction(() => {
+        if (cache === null) {
+          let _val3 = ToString(O);
+
+          Assert(!(_val3 instanceof AbruptCompletion), "");
+
+          if (_val3 instanceof Completion) {
+            _val3 = _val3.Value;
+          }
+
+          let errorString = _val3.stringValue();
+
+          stack.forEach(s => {
+            errorString = `${errorString}\n    at ${s.toString()}`;
+          });
+          cache = new Value(errorString);
+        }
+
+        return cache;
+      }, []),
+      Set: CreateBuiltinFunction(([value = Value.undefined]) => {
+        cache = value;
+        return Value.undefined;
+      }, []),
       Enumerable: Value.false,
-      Configurable: Value.false
+      Configurable: Value.true
     })) instanceof AbruptCompletion), "");
   }
 
@@ -493,6 +403,7 @@
 
     return new NormalCompletion(val);
   }
+
   function AwaitFulfilledFunctions([value]) {
     const F = surroundingAgent.activeFunctionObject;
     const asyncContext = F.AsyncContext;
@@ -503,6 +414,7 @@
     Assert(surroundingAgent.runningExecutionContext === prevContext, "surroundingAgent.runningExecutionContext === prevContext");
     return Value.undefined;
   }
+
   function AwaitRejectedFunctions([reason]) {
     const F = surroundingAgent.activeFunctionObject;
     const asyncContext = F.AsyncContext;
@@ -513,6 +425,7 @@
     Assert(surroundingAgent.runningExecutionContext === prevContext, "surroundingAgent.runningExecutionContext === prevContext");
     return Value.undefined;
   }
+
   function* Await(value) {
     const asyncContext = surroundingAgent.runningExecutionContext;
     let promise = PromiseResolve(surroundingAgent.intrinsic('%Promise%'), value);
@@ -14178,11 +14091,11 @@
     return unwind(Evaluate_ModuleBody(Module));
   }
   function* Evaluate(Production) {
+    surroundingAgent.runningExecutionContext.callSite.setLocation(Production);
+
     if (surroundingAgent.hostDefinedOptions.onNodeEvaluation) {
       surroundingAgent.hostDefinedOptions.onNodeEvaluation(Production, surroundingAgent.currentRealmRecord);
     }
-
-    surroundingAgent.runningExecutionContext.callSite.setLocation(Production);
 
     switch (true) {
       case isImportDeclaration(Production):
@@ -14649,8 +14562,7 @@
       moduleCtx.ScriptOrModule = module; // Assert: module has been linked and declarations in its module environment have been instantiated.
 
       moduleCtx.VariableEnvironment = module.Environment;
-      moduleCtx.LexicalEnvironment = module.Environment;
-      moduleCtx.callSite.isTopLevel = true; // Suspend the currently running execution context.
+      moduleCtx.LexicalEnvironment = module.Environment; // Suspend the currently running execution context.
 
       if (module.Async === Value.false) {
         Assert(capability === undefined, "capability === undefined");
@@ -15767,8 +15679,7 @@
           calleeContext.Function = F;
           const calleeRealm = F.Realm;
           calleeContext.Realm = calleeRealm;
-          calleeContext.ScriptOrModule = F.ScriptOrModule;
-          calleeContext.callSite.isConstructor = true; // 8. Perform any necessary implementation-defined initialization of calleeContext.
+          calleeContext.ScriptOrModule = F.ScriptOrModule; // 8. Perform any necessary implementation-defined initialization of calleeContext.
 
           surroundingAgent.executionContextStack.push(calleeContext);
           const result = nativeCall(F, argumentsList, undefined, newTarget); // Remove calleeContext from the execution context stack and
@@ -35529,6 +35440,7 @@
       this.Function = undefined;
       this.Realm = undefined;
       this.ScriptOrModule = undefined;
+      this.VariableEnvironment = undefined;
       this.LexicalEnvironment = undefined;
       this.callSite = new CallSite(this);
     }
@@ -35540,7 +35452,7 @@
       e.Realm = this.Realm;
       e.ScriptOrModule = this.ScriptOrModule;
       e.LexicalEnvironment = this.LexicalEnvironment;
-      e.callSite = this.callSite.copy(e);
+      e.callSite = this.callSite.clone();
       return e;
     }
 
@@ -35568,8 +35480,7 @@
     scriptCtx.ScriptOrModule = scriptRecord;
     scriptCtx.VariableEnvironment = globalEnv;
     scriptCtx.LexicalEnvironment = globalEnv;
-    scriptCtx.HostDefined = scriptRecord.HostDefined;
-    scriptCtx.callSite.isToplevel = true; // Suspend runningExecutionContext
+    scriptCtx.HostDefined = scriptRecord.HostDefined; // Suspend runningExecutionContext
 
     surroundingAgent.executionContextStack.push(scriptCtx);
     const scriptBody = scriptRecord.ECMAScriptCode.body;
@@ -36498,7 +36409,6 @@
 
   function AsyncBlockStart(promiseCapability, asyncBody, asyncContext) {
     const runningContext = surroundingAgent.runningExecutionContext;
-    asyncContext.promiseCapability = promiseCapability;
 
     asyncContext.codeEvaluationState = function* resumer() {
       const evaluator = isExpressionBody(asyncBody) ? Evaluate_ExpressionBody : Evaluate_FunctionBody;
@@ -37377,7 +37287,6 @@
     calleeContext.VariableEnvironment = localEnv; // Suspend(callerContext);
 
     surroundingAgent.executionContextStack.push(calleeContext);
-    calleeContext.callSite.isConstructor = newTarget !== Value.undefined;
     return calleeContext;
   } // 9.2.1.2 #sec-ordinarycallbindthis
 
@@ -38073,7 +37982,6 @@
     evalCtx.ScriptOrModule = ctx.ScriptOrModule;
     evalCtx.VariableEnvironment = varEnv;
     evalCtx.LexicalEnvironment = lexEnv;
-    evalCtx.callSite.evalOrigin = surroundingAgent.runningExecutionContext.callSite.copy();
     surroundingAgent.executionContextStack.push(evalCtx);
     let result = EvalDeclarationInstantiation(body, varEnv, lexEnv, strictEval);
 
@@ -43182,7 +43090,6 @@
       newContext.Function = Value.null;
       newContext.Realm = nextPending.Realm;
       newContext.ScriptOrModule = nextPending.ScriptOrModule;
-      newContext.callSite.isToplevel = true;
       surroundingAgent.executionContextStack.push(newContext);
       const result = nextPending.Job(...nextPending.Arguments);
       surroundingAgent.executionContextStack.pop(newContext);
@@ -43201,7 +43108,6 @@
       newContext.Function = Value.null;
       newContext.Realm = realm;
       newContext.ScriptOrModule = Value.null;
-      newContext.callSite.isToplevel = true;
       surroundingAgent.executionContextStack.push(newContext);
       const global = Value.undefined;
       const thisValue = Value.undefined;
