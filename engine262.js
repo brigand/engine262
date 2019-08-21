@@ -38,6 +38,201 @@
     }
 
   }
+  class CallSite {
+    constructor(context) {
+      this.context = context;
+      this.isToplevel = false;
+      this.isConstructor = false;
+      this.lineNumber = null;
+      this.columnNumber = null;
+      this.methodName = null;
+      this.evalOrigin = null;
+    }
+
+    isEval() {
+      return !!this.evalOrigin;
+    }
+
+    isNative() {
+      return this.context.Function instanceof BuiltinFunctionValue;
+    }
+
+    isAsync() {
+      if (this.context.Function !== Value.null) {
+        return this.context.Function.ECMAScriptCode && this.context.Function.ECMAScriptCode.async;
+      }
+
+      return false;
+    }
+
+    getThisValue() {
+      if (this.context.LexicalEnvironment.HasThisBinding() === Value.true) {
+        return this.context.LexicalEnvironment.GetThisBinding();
+      }
+
+      return null;
+    }
+
+    getFunctionName() {
+      if (this.context.Function !== Value.null) {
+        const name = this.context.Function.properties.get(new Value('name'));
+
+        if (name) {
+          let _val = ToString(name.Value);
+
+          Assert(!(_val instanceof AbruptCompletion), "");
+
+          if (_val instanceof Completion) {
+            _val = _val.Value;
+          }
+
+          return _val.stringValue();
+        }
+      }
+
+      return null;
+    }
+
+    getSpecifier() {
+      if (this.context.ScriptOrModule instanceof AbstractModuleRecord) {
+        return this.context.ScriptOrModule.HostDefined.specifier;
+      }
+
+      return null;
+    }
+
+    getMethodName() {
+      const idx = surroundingAgent.executionContextStack.indexOf(this.context);
+      const parent = surroundingAgent.executionContextStack[idx - 1];
+
+      if (parent) {
+        return parent.callSite.methodName;
+      }
+
+      return null;
+    }
+
+    setLocation(node) {
+      const {
+        line,
+        column
+      } = node.loc.start;
+      this.lineNumber = line;
+      this.columnNumber = column;
+
+      if (node.type === 'CallExpression' || node.type === 'NewExpression') {
+        if (node.callee.type === 'MemberExpression' || node.callee.type === 'Identifier') {
+          this.methodName = node.callee.sourceText();
+        }
+      }
+    }
+
+    copy(context = this.context) {
+      const c = new CallSite(context);
+      c.isToplevel = this.isToplevel;
+      c.isConstructor = this.isConstructor;
+      c.lineNumber = this.lineNumber;
+      c.columnNumber = this.columnNumber;
+      c.methodName = this.methodName;
+      c.evalOrigin = this.evalOrigin;
+      return c;
+    }
+
+    static loc(site) {
+      if (site.isNative()) {
+        return 'native';
+      }
+
+      let out = '';
+      const specifier = site.getSpecifier();
+
+      if (!specifier && site.isEval()) {
+        out += this.formatEvalOrigin(site, site.evalOrigin);
+      }
+
+      if (specifier) {
+        out += specifier;
+      } else {
+        out += '<anonymous>';
+      }
+
+      if (site.lineNumber !== null) {
+        out += `:${site.lineNumber}`;
+
+        if (site.columnNumber !== null) {
+          out += `:${site.columnNumber}`;
+        }
+      }
+
+      return out.trim();
+    }
+
+    static formatEvalOrigin(site, origin) {
+      const specifier = origin.getSpecifier();
+
+      if (specifier) {
+        return specifier;
+      }
+
+      let out = 'eval at ';
+      const name = site.getFunctionName();
+
+      if (name) {
+        out += name;
+      } else {
+        out += '<anonymous>';
+      }
+
+      if (origin.lineNumber !== null) {
+        out += `:${origin.lineNumber}`;
+
+        if (origin.columnNumber !== null) {
+          out += `:${origin.columnNumber}`;
+        }
+      }
+
+      out += ', ';
+      return out;
+    }
+
+    toString() {
+      const isAsync = this.isAsync();
+      const functionName = this.getFunctionName();
+      const isMethodCall = !(this.isToplevel || this.isConstructor);
+      let string = isAsync ? 'async ' : '';
+
+      if (isMethodCall) {
+        const methodName = this.getMethodName();
+
+        if (functionName) {
+          string += functionName;
+
+          if (methodName && functionName !== methodName && !methodName.endsWith(functionName)) {
+            string += ` [as ${methodName}]`;
+          }
+        } else if (methodName) {
+          string += methodName;
+        } else {
+          string += '<anonymous>';
+        }
+      } else if (this.isConstructor) {
+        string += 'new ';
+
+        if (functionName) {
+          string += functionName;
+        } else {
+          string += '<anonymous>';
+        }
+      } else if (functionName) {
+        string += functionName;
+      } else {
+        return `${string}${CallSite.loc(this)}`;
+      }
+
+      return `${string} (${CallSite.loc(this)})`;
+    }
+
+  }
   function unwind(iterator, maxSteps = 1) {
     let steps = 0;
 
@@ -71,45 +266,66 @@
     } = context.codeEvaluationState.next(completion);
 
     if (typeof value === 'function' && value[kSafeToResume] === true) {
-      let _val = value();
+      let _val2 = value();
 
-      Assert(!(_val instanceof AbruptCompletion), "");
+      Assert(!(_val2 instanceof AbruptCompletion), "");
 
-      if (_val instanceof Completion) {
-        _val = _val.Value;
+      if (_val2 instanceof Completion) {
+        _val2 = _val2.Value;
       }
 
-      return _val;
+      return _val2;
     }
 
     return value;
   }
-  function captureStack(O) {
-    const stack = surroundingAgent.executionContextStack.filter(e => e.Function !== Value.null).slice(0, -1) // remove error constructor
-    .map(e => {
-      let string = '\n  at ';
-      const functionName = e.Function.properties.get(new Value('name'));
+  const kMaxAsyncFrames = 8;
 
-      if (functionName) {
-        let _val2 = ToString(functionName.Value);
+  function captureAsyncStackTrace(stack, promise) {
+    let added = 0;
 
-        Assert(!(_val2 instanceof AbruptCompletion), "");
+    while (added < kMaxAsyncFrames) {
+      if (promise.PromiseFulfillReactions.length !== 1) {
+        return;
+      }
 
-        if (_val2 instanceof Completion) {
-          _val2 = _val2.Value;
+      const [reaction] = promise.PromiseFulfillReactions;
+
+      if (reaction.Handler.nativeFunction === AwaitFulfilledFunctions) {
+        const asyncContext = reaction.Handler.AsyncContext;
+        stack.push(asyncContext.callSite);
+        added += 1;
+
+        if ('PromiseState' in asyncContext.promiseCapability.Promise) {
+          promise = asyncContext.promiseCapability.Promise;
+        } else {
+          return;
         }
-
-        string += _val2.stringValue();
       } else {
-        string += '<anonymous>';
+        if ('PromiseState' in reaction.Capability.Promise) {
+          promise = reaction.Capability.Promise;
+        } else {
+          return;
+        }
       }
+    }
+  }
 
-      if (e.ScriptOrModule instanceof AbstractModuleRecord) {
-        string += e.ScriptOrModule.HostDefined.specifier;
+  function captureStack(O) {
+    const stack = [];
+
+    for (const e of surroundingAgent.executionContextStack.slice(0, -1).reverse()) {
+      stack.push(e.callSite);
+
+      if (e.callSite.isToplevel) {
+        break;
       }
+    }
 
-      return string;
-    }).reverse();
+    if (stack[0].context.promiseCapability) {
+      stack.pop();
+      captureAsyncStackTrace(stack, stack[0].context.promiseCapability.Promise);
+    }
 
     let _val3 = ToString(O);
 
@@ -121,7 +337,7 @@
 
     const errorString = _val3.stringValue();
 
-    const trace = `${errorString}${stack.join('')}`;
+    const trace = `${errorString}${stack.map(s => `\n  at ${s}`).join('')}`;
     Assert(!(DefinePropertyOrThrow(O, new Value('stack'), Descriptor({
       Value: new Value(trace),
       Writable: Value.true,
@@ -277,7 +493,6 @@
 
     return new NormalCompletion(val);
   }
-
   function AwaitFulfilledFunctions([value]) {
     const F = surroundingAgent.activeFunctionObject;
     const asyncContext = F.AsyncContext;
@@ -288,7 +503,6 @@
     Assert(surroundingAgent.runningExecutionContext === prevContext, "surroundingAgent.runningExecutionContext === prevContext");
     return Value.undefined;
   }
-
   function AwaitRejectedFunctions([reason]) {
     const F = surroundingAgent.activeFunctionObject;
     const asyncContext = F.AsyncContext;
@@ -299,7 +513,6 @@
     Assert(surroundingAgent.runningExecutionContext === prevContext, "surroundingAgent.runningExecutionContext === prevContext");
     return Value.undefined;
   }
-
   function* Await(value) {
     const asyncContext = surroundingAgent.runningExecutionContext;
     let promise = PromiseResolve(surroundingAgent.intrinsic('%Promise%'), value);
@@ -13969,6 +14182,8 @@
       surroundingAgent.hostDefinedOptions.onNodeEvaluation(Production, surroundingAgent.currentRealmRecord);
     }
 
+    surroundingAgent.runningExecutionContext.callSite.setLocation(Production);
+
     switch (true) {
       case isImportDeclaration(Production):
         return new NormalCompletion(undefined);
@@ -14434,7 +14649,8 @@
       moduleCtx.ScriptOrModule = module; // Assert: module has been linked and declarations in its module environment have been instantiated.
 
       moduleCtx.VariableEnvironment = module.Environment;
-      moduleCtx.LexicalEnvironment = module.Environment; // Suspend the currently running execution context.
+      moduleCtx.LexicalEnvironment = module.Environment;
+      moduleCtx.callSite.isTopLevel = true; // Suspend the currently running execution context.
 
       if (module.Async === Value.false) {
         Assert(capability === undefined, "capability === undefined");
@@ -15551,7 +15767,8 @@
           calleeContext.Function = F;
           const calleeRealm = F.Realm;
           calleeContext.Realm = calleeRealm;
-          calleeContext.ScriptOrModule = F.ScriptOrModule; // 8. Perform any necessary implementation-defined initialization of calleeContext.
+          calleeContext.ScriptOrModule = F.ScriptOrModule;
+          calleeContext.callSite.isConstructor = true; // 8. Perform any necessary implementation-defined initialization of calleeContext.
 
           surroundingAgent.executionContextStack.push(calleeContext);
           const result = nativeCall(F, argumentsList, undefined, newTarget); // Remove calleeContext from the execution context stack and
@@ -35313,6 +35530,7 @@
       this.Realm = undefined;
       this.ScriptOrModule = undefined;
       this.LexicalEnvironment = undefined;
+      this.callSite = new CallSite(this);
     }
 
     copy() {
@@ -35322,6 +35540,7 @@
       e.Realm = this.Realm;
       e.ScriptOrModule = this.ScriptOrModule;
       e.LexicalEnvironment = this.LexicalEnvironment;
+      e.callSite = this.callSite.copy(e);
       return e;
     }
 
@@ -35349,7 +35568,8 @@
     scriptCtx.ScriptOrModule = scriptRecord;
     scriptCtx.VariableEnvironment = globalEnv;
     scriptCtx.LexicalEnvironment = globalEnv;
-    scriptCtx.HostDefined = scriptRecord.HostDefined; // Suspend runningExecutionContext
+    scriptCtx.HostDefined = scriptRecord.HostDefined;
+    scriptCtx.callSite.isToplevel = true; // Suspend runningExecutionContext
 
     surroundingAgent.executionContextStack.push(scriptCtx);
     const scriptBody = scriptRecord.ECMAScriptCode.body;
@@ -36278,6 +36498,7 @@
 
   function AsyncBlockStart(promiseCapability, asyncBody, asyncContext) {
     const runningContext = surroundingAgent.runningExecutionContext;
+    asyncContext.promiseCapability = promiseCapability;
 
     asyncContext.codeEvaluationState = function* resumer() {
       const evaluator = isExpressionBody(asyncBody) ? Evaluate_ExpressionBody : Evaluate_FunctionBody;
@@ -37156,6 +37377,7 @@
     calleeContext.VariableEnvironment = localEnv; // Suspend(callerContext);
 
     surroundingAgent.executionContextStack.push(calleeContext);
+    calleeContext.callSite.isConstructor = newTarget !== Value.undefined;
     return calleeContext;
   } // 9.2.1.2 #sec-ordinarycallbindthis
 
@@ -37851,6 +38073,7 @@
     evalCtx.ScriptOrModule = ctx.ScriptOrModule;
     evalCtx.VariableEnvironment = varEnv;
     evalCtx.LexicalEnvironment = lexEnv;
+    evalCtx.callSite.evalOrigin = surroundingAgent.runningExecutionContext.callSite.copy();
     surroundingAgent.executionContextStack.push(evalCtx);
     let result = EvalDeclarationInstantiation(body, varEnv, lexEnv, strictEval);
 
@@ -42959,6 +43182,7 @@
       newContext.Function = Value.null;
       newContext.Realm = nextPending.Realm;
       newContext.ScriptOrModule = nextPending.ScriptOrModule;
+      newContext.callSite.isToplevel = true;
       surroundingAgent.executionContextStack.push(newContext);
       const result = nextPending.Job(...nextPending.Arguments);
       surroundingAgent.executionContextStack.pop(newContext);
@@ -42977,6 +43201,7 @@
       newContext.Function = Value.null;
       newContext.Realm = realm;
       newContext.ScriptOrModule = Value.null;
+      newContext.callSite.isToplevel = true;
       surroundingAgent.executionContextStack.push(newContext);
       const global = Value.undefined;
       const thisValue = Value.undefined;
