@@ -17248,7 +17248,7 @@
         return trapResult;
       }
 
-      const uncheckedResultKeys = new global.Set(trapResult);
+      const uncheckedResultKeys = new globalThis.Set(trapResult);
 
       for (const key of targetNonconfigurableKeys) {
         if (!uncheckedResultKeys.has(key)) {
@@ -40932,7 +40932,7 @@
 
     const f = F.stringValue();
 
-    if (/^[gimsuy]*$/.test(f) === false || new global.Set(f).size !== f.length) {
+    if (/^[gimsuy]*$/.test(f) === false || new globalThis.Set(f).size !== f.length) {
       return surroundingAgent.Throw('SyntaxError', msg('InvalidRegExpFlags', f));
     }
 
