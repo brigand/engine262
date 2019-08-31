@@ -15518,6 +15518,10 @@
       return !Number.isFinite(this.number) && !this.isNaN();
     }
 
+    isFinite() {
+      return Number.isFinite(this.number);
+    }
+
   }
   const negativeZero = new NumberValue(-0);
   class StringValue extends PrimitiveValue {
@@ -22873,7 +22877,7 @@
     // generalization of that specified in 7.1.12.1.
 
 
-    return surroundingAgent.Throw('TypeError', 'NumberToString');
+    return new Value(x.numberValue().toString());
   } // 20.1.3.7 #sec-number.prototype.valueof
 
 
@@ -32255,7 +32259,7 @@
       }
 
       if (Type(value) === 'Number') {
-        if (!value.isInfinity()) {
+        if (value.isFinite()) {
           let _val5 = ToString(value);
 
           Assert(!(_val5 instanceof AbruptCompletion), "");
@@ -32401,7 +32405,7 @@
       indent = `${indent}${gap}`;
       const partial = [];
 
-      let _hygienicTemp2 = Get(value, new Value('length'));
+      let _hygienicTemp2 = LengthOfArrayLike(value);
 
       if (_hygienicTemp2 instanceof AbruptCompletion) {
         return _hygienicTemp2;
@@ -32499,56 +32503,53 @@
           let k = 0;
 
           while (k < len) {
-            let _val6 = ToString(new Value(k));
+            let vStr = ToString(new Value(k));
+            Assert(!(vStr instanceof AbruptCompletion), "");
 
-            Assert(!(_val6 instanceof AbruptCompletion), "");
-
-            if (_val6 instanceof Completion) {
-              _val6 = _val6.Value;
+            if (vStr instanceof Completion) {
+              vStr = vStr.Value;
             }
 
-            {
-              let v = Get(replacer, _val6);
+            let v = Get(replacer, vStr);
 
-              if (v instanceof AbruptCompletion) {
-                return v;
+            if (v instanceof AbruptCompletion) {
+              return v;
+            }
+
+            if (v instanceof Completion) {
+              v = v.Value;
+            }
+
+            let item = Value.undefined;
+
+            if (Type(v) === 'String') {
+              item = v;
+            } else if (Type(v) === 'Number') {
+              item = ToString(v);
+              Assert(!(item instanceof AbruptCompletion), "");
+
+              if (item instanceof Completion) {
+                item = item.Value;
               }
-
-              if (v instanceof Completion) {
-                v = v.Value;
-              }
-
-              let item = Value.undefined;
-
-              if (Type(v) === 'String') {
-                item = v;
-              } else if (Type(v) === 'Number') {
+            } else if (Type(v) === 'Object') {
+              if ('StringData' in v || 'NumberData' in v) {
                 item = ToString(v);
-                Assert(!(item instanceof AbruptCompletion), "");
+
+                if (item instanceof AbruptCompletion) {
+                  return item;
+                }
 
                 if (item instanceof Completion) {
                   item = item.Value;
                 }
-              } else if (Type(v) === 'Object') {
-                if ('StringData' in v || 'NumberData' in v) {
-                  item = ToString(v);
-
-                  if (item instanceof AbruptCompletion) {
-                    return item;
-                  }
-
-                  if (item instanceof Completion) {
-                    item = item.Value;
-                  }
-                }
               }
-
-              if (Type(item) !== 'undefined' && !PropertyList.includes(item)) {
-                PropertyList.push(item);
-              }
-
-              k += 1;
             }
+
+            if (item !== Value.undefined && !PropertyList.includes(item)) {
+              PropertyList.push(item);
+            }
+
+            k += 1;
           }
         }
       }
@@ -32581,15 +32582,15 @@
     let gap;
 
     if (Type(space) === 'Number') {
-      let _val7 = ToInteger(space);
+      let _val6 = ToInteger(space);
 
-      Assert(!(_val7 instanceof AbruptCompletion), "");
+      Assert(!(_val6 instanceof AbruptCompletion), "");
 
-      if (_val7 instanceof Completion) {
-        _val7 = _val7.Value;
+      if (_val6 instanceof Completion) {
+        _val6 = _val6.Value;
       }
 
-      space = Math.min(10, _val7.numberValue());
+      space = Math.min(10, _val6.numberValue());
 
       if (space < 1) {
         gap = '';
@@ -32622,15 +32623,15 @@
     const json = BootstrapPrototype(realmRec, [['parse', JSON_parse, 2], ['stringify', JSON_stringify, 3]], realmRec.Intrinsics['%Object.prototype%'], 'JSON');
     realmRec.Intrinsics['%JSON%'] = json;
 
-    let _val8 = json.Get(new Value('parse'));
+    let _val7 = json.Get(new Value('parse'));
 
-    Assert(!(_val8 instanceof AbruptCompletion), "");
+    Assert(!(_val7 instanceof AbruptCompletion), "");
 
-    if (_val8 instanceof Completion) {
-      _val8 = _val8.Value;
+    if (_val7 instanceof Completion) {
+      _val7 = _val7.Value;
     }
 
-    realmRec.Intrinsics['%JSON.parse%'] = _val8;
+    realmRec.Intrinsics['%JSON.parse%'] = _val7;
   }
 
   function TheEval([x = Value.undefined]) {
@@ -36760,6 +36761,10 @@
     }
 
     if (numeric === Value.undefined) {
+      return false;
+    }
+
+    if (!Number.isInteger(numeric.numberValue())) {
       return false;
     }
 
