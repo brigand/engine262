@@ -212,6 +212,36 @@
     }
 
   }
+
+  function captureAsyncStack(stack) {
+    let promise = stack[0].context.promiseCapability.Promise;
+
+    for (let i = 0; i < 10; i += 1) {
+      if (promise.PromiseFulfillReactions.length !== 1) {
+        return;
+      }
+
+      const [reaction] = promise.PromiseFulfillReactions;
+
+      if (reaction.handler.nativeFunction === AwaitFulfilledFunctions) {
+        const asyncContext = reaction.Handler.AsyncContext;
+        stack.push(asyncContext.callSite.clone());
+
+        if ('PromiseState' in asyncContext.promiseCapability.Promise) {
+          promise = asyncContext.promiseCapability.Promise;
+        } else {
+          return;
+        }
+      } else {
+        if ('PromiseState' in reaction.Capability.Promise) {
+          promise = reaction.Capability.Promise;
+        } else {
+          return;
+        }
+      }
+    }
+  }
+
   function captureStack(O) {
     const stack = [];
 
@@ -223,6 +253,11 @@
       }
 
       stack.push(e.callSite.clone());
+    }
+
+    if (stack.length > 0 && stack[0].context.promiseCapability) {
+      stack.pop();
+      captureAsyncStack(stack);
     }
 
     let cache = null;
@@ -403,7 +438,6 @@
 
     return new NormalCompletion(val);
   }
-
   function AwaitFulfilledFunctions([value]) {
     const F = surroundingAgent.activeFunctionObject;
     const asyncContext = F.AsyncContext;
@@ -35444,6 +35478,7 @@
       this.VariableEnvironment = undefined;
       this.LexicalEnvironment = undefined;
       this.callSite = new CallSite(this);
+      this.promiseCapability = undefined;
     }
 
     copy() {
@@ -35452,8 +35487,10 @@
       e.Function = this.Function;
       e.Realm = this.Realm;
       e.ScriptOrModule = this.ScriptOrModule;
+      e.VariableEnvironment = this.VariableEnvironment;
       e.LexicalEnvironment = this.LexicalEnvironment;
       e.callSite = this.callSite.clone();
+      e.promiseCapability = this.promiseCapability;
       return e;
     }
 
@@ -36409,6 +36446,7 @@
   // https://tc39.es/proposal-top-level-await/#sec-asyncblockstart
 
   function AsyncBlockStart(promiseCapability, asyncBody, asyncContext) {
+    asyncContext.promiseCapability = promiseCapability;
     const runningContext = surroundingAgent.runningExecutionContext;
 
     asyncContext.codeEvaluationState = function* resumer() {
