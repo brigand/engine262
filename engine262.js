@@ -35572,8 +35572,10 @@
     return new NormalCompletion(undefined);
   }
   function HostPromiseRejectionTracker(promise, operation) {
-    if (surroundingAgent.hostDefinedOptions.promiseRejectionTracker) {
-      Assert(!(surroundingAgent.hostDefinedOptions.promiseRejectionTracker(promise, operation) instanceof AbruptCompletion), "");
+    const realm = surroundingAgent.currentRealmRecord;
+
+    if (realm && realm.HostDefined.promiseRejectionTracker) {
+      Assert(!(realm.HostDefined.promiseRejectionTracker(promise, operation) instanceof AbruptCompletion), "");
     }
   }
   function HostHasSourceTextAvailable(func) {
@@ -35592,9 +35594,9 @@
     return Value.true;
   }
   function HostResolveImportedModule(referencingScriptOrModule, specifier) {
-    const Realm = referencingScriptOrModule.Realm || surroundingAgent.currentRealmRecord;
+    const realm = referencingScriptOrModule.Realm || surroundingAgent.currentRealmRecord;
 
-    if (Realm.HostDefined.resolveImportedModule) {
+    if (realm.HostDefined.resolveImportedModule) {
       specifier = specifier.stringValue();
 
       if (referencingScriptOrModule !== Value.null) {
@@ -35608,7 +35610,7 @@
       }
 
       const publicModule = referencingScriptOrModule.HostDefined ? referencingScriptOrModule.HostDefined.public : null;
-      let apiModule = Realm.HostDefined.resolveImportedModule(publicModule, specifier);
+      let apiModule = realm.HostDefined.resolveImportedModule(publicModule, specifier);
 
       if (apiModule instanceof AbruptCompletion) {
         return apiModule;
