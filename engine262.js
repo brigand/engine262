@@ -92,8 +92,8 @@
       this.constructCall = false;
     }
 
-    clone() {
-      const c = new CallSite(this.context);
+    clone(context = this.context) {
+      const c = new CallSite(context);
       c.lineNumber = this.lineNumber;
       c.columnNumber = this.columnNumber;
       c.constructCall = this.constructCall;
@@ -223,7 +223,7 @@
 
       const [reaction] = promise.PromiseFulfillReactions;
 
-      if (reaction.handler.nativeFunction === AwaitFulfilledFunctions) {
+      if (reaction.Handler.nativeFunction === AwaitFulfilledFunctions) {
         const asyncContext = reaction.Handler.AsyncContext;
         stack.push(asyncContext.callSite.clone());
 
@@ -256,7 +256,6 @@
     }
 
     if (stack.length > 0 && stack[0].context.promiseCapability) {
-      stack.pop();
       captureAsyncStack(stack);
     }
 
@@ -35489,7 +35488,7 @@
       e.ScriptOrModule = this.ScriptOrModule;
       e.VariableEnvironment = this.VariableEnvironment;
       e.LexicalEnvironment = this.LexicalEnvironment;
-      e.callSite = this.callSite.clone();
+      e.callSite = this.callSite.clone(e);
       e.promiseCapability = this.promiseCapability;
       return e;
     }
