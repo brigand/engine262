@@ -43340,7 +43340,7 @@
           }
         }
 
-        let out = `${tag} {`;
+        let out = tag ? `${tag} {` : '{';
 
         if (cache.length > 5) {
           cache.forEach(c => {
