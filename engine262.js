@@ -43220,18 +43220,7 @@
         return '[Function]';
       }
 
-      const errorToString = ctx.realm.Intrinsics['%Error.prototype%'].properties.get(new Value('toString')).Value;
-      let toString = Get(v, new Value('toString'));
-
-      if (toString instanceof AbruptCompletion) {
-        return toString;
-      }
-
-      if (toString instanceof Completion) {
-        toString = toString.Value;
-      }
-
-      if (toString.nativeFunction === errorToString.nativeFunction) {
+      if ('ErrorData' in v) {
         let e = Get(v, new Value('stack'));
 
         if (e instanceof AbruptCompletion) {
@@ -43243,6 +43232,16 @@
         }
 
         if (!e.stringValue) {
+          let toString = Get(v, new Value('toString'));
+
+          if (toString instanceof AbruptCompletion) {
+            return toString;
+          }
+
+          if (toString instanceof Completion) {
+            toString = toString.Value;
+          }
+
           e = Call(toString, v);
           Assert(!(e instanceof AbruptCompletion), "");
 
