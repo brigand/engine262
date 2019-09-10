@@ -22957,20 +22957,23 @@
 
     surroundingAgent.executionContextStack.push(scriptCtx);
     const scriptBody = scriptRecord.ECMAScriptCode.body;
-    let result = EnsureCompletion(GlobalDeclarationInstantiation(scriptBody, globalEnv));
 
-    if (result.Type === 'normal') {
-      result = Evaluate_Script(scriptBody);
+    try {
+      let result = EnsureCompletion(GlobalDeclarationInstantiation(scriptBody, globalEnv));
+
+      if (result.Type === 'normal') {
+        result = Evaluate_Script(scriptBody, globalEnv);
+      }
+
+      if (result.Type === 'normal' && !result.Value) {
+        result = new NormalCompletion(Value.undefined);
+      }
+
+      return result;
+    } finally {
+      // Suspend scriptCtx
+      surroundingAgent.executionContextStack.pop(scriptCtx); // Resume(surroundingAgent.runningExecutionContext);
     }
-
-    if (result.Type === 'normal' && !result.Value) {
-      result = new NormalCompletion(Value.undefined);
-    } // Suspend scriptCtx
-
-
-    surroundingAgent.executionContextStack.pop(scriptCtx); // Resume(surroundingAgent.runningExecutionContext);
-
-    return result;
   } // 15.1.12 #sec-scriptevaluationjob
 
   function ScriptEvaluationJob(sourceText, hostDefined) {
