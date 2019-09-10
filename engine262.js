@@ -43202,7 +43202,7 @@
 
       if ('PromiseState' in v) {
         ctx.indent += 1;
-        const result = v.PromiseState === 'pending' ? 'undefined' : i(v.Value);
+        const result = v.PromiseState === 'pending' ? 'undefined' : i(v.PromiseResult);
         ctx.indent -= 1;
         return `Promise {
   [[PromiseState]]: ${v.PromiseState}
