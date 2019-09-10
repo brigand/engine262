@@ -43390,14 +43390,6 @@
     GetModuleNamespace: GetModuleNamespace$1,
     ToPrimitive: ToPrimitive$1
   } = Abstract;
-  function initializeAgent(options = {}) {
-    if (surroundingAgent) {
-      throw new Error('Surrounding Agent is already initialized');
-    }
-
-    const agent = new Agent(options);
-    setSurroundingAgent(agent);
-  }
 
   function runJobQueue() {
     while (true) {
@@ -43421,6 +43413,45 @@
         HostReportErrors(result.Value);
       }
     }
+  }
+
+  class APIAgent {
+    constructor(options = {}) {
+      this.agent = new Agent(options);
+      this.active = false;
+      this.outerAgent = undefined;
+    }
+
+    scope(cb) {
+      this.enter();
+
+      try {
+        return cb();
+      } finally {
+        this.exit();
+      }
+    }
+
+    enter() {
+      if (this.active) {
+        throw new Error('Agent is already entered');
+      }
+
+      this.active = true;
+      this.outerAgent = surroundingAgent;
+      setSurroundingAgent(this.agent);
+    }
+
+    exit() {
+      if (!this.active) {
+        throw new Error('Agent is not entered');
+      }
+
+      setSurroundingAgent(this.outerAgent);
+      this.outerAgent = undefined;
+      this.active = false;
+    }
+
   }
 
   class APIRealm {
@@ -43520,10 +43551,13 @@
 
       this.active = true;
       surroundingAgent.executionContextStack.push(this.context);
-      const res = cb();
-      surroundingAgent.executionContextStack.pop(this.context);
-      this.active = false;
-      return res;
+
+      try {
+        return cb();
+      } finally {
+        surroundingAgent.executionContextStack.pop(this.context);
+        this.active = false;
+      }
     }
 
   }
@@ -43610,6 +43644,7 @@
 
   exports.AbruptCompletion = AbruptCompletion;
   exports.Abstract = Abstract;
+  exports.Agent = APIAgent;
   exports.Completion = Completion;
   exports.Descriptor = Descriptor;
   exports.FEATURES = FEATURES;
@@ -43619,7 +43654,6 @@
   exports.Throw = Throw;
   exports.ToString = ToString$1;
   exports.Value = APIValue;
-  exports.initializeAgent = initializeAgent;
   exports.inspect = inspect;
 
   Object.defineProperty(exports, '__esModule', { value: true });
